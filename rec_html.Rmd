@@ -1,0 +1,235 @@
+---
+title: "Retail Recommendation System"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Steps for designing the required machine learning algorithm:
+
+###1.	Identifying the problem type
+Given dataset is a retail rocket dataset and we aim to build a recommender system that predicts the transaction and event pattern of a visitor. With the given data we can do so by exploring the events.csv file. It records the data about the visitor that performs any one event (view, add to cart or transaction) for a particular item at a particular time. If the event performed is a 'transaction', only then the 'transaction id' column will have a value, otherwise it will be N/A.
+
+###2.	Identifying the data sources
+Next, we load the files into RStudio using the following commands:
+```{r echo= TRUE}
+getwd()
+category_tree<- read.csv("category_tree.csv", header=T)
+events <- read.csv("events.csv", header=T)
+item_properties1 <- read.csv("item_properties_part1.csv", header=T)
+item_properties2 <- read.csv("item_properties_part2.csv", header=T)
+```
+
+Given 4 csv files along their column names are as follows:
+*	category_tree
+```{r}
+colnames(category_tree)
+```
+*	events
+```{r}
+colnames(events)
+```
+
+*	item_properties_1,2
+```{r}
+colnames(item_properties1)
+```
+
+Getting the number of rows for each data frame as follows:
+```{r}
+nrow(events)
+nrow(category_tree)
+nrow(item_properties1)
+nrow(item_properties2)
+
+```
+
+###3.	Data preprocessing and cleansing
+The file category_tree.csv has 25 N/A values out of 1669. However, both the columns represent an 'id' so we cannot fill it ourselves with the mean of existing values or a random number. For the events.csv file, we have N/A values in the column 'transactionid'. Plausible explanation for this is that a 'transactionid' exists only when event= transaction. So, no data preprocessing is required so far.
+
+###4.	Exploratory data analysis
+Looking at the head of each file and getting to know the structure of the files. The files item_properties_part1.csv and item_properties_part2.csv contain hashed values for columns 'property' and 'value'. 
+
+```{r}
+head(category_tree) #all id's
+```
+
+```{r}
+head(events) #No missing timestamp values. Other columns have expected data
+```
+
+head(item_properties1,2): Duplicate values for different timestamp but different 'property' values have already been removed. Values for 'property' and 'value' have been hashed except for categoryid (id of the category; corresponding to it's parent's id as well- from category_tree.csv file) and available (tells availability of the item:0,1) which convey the corresponding information.
+```{r}
+head(item_properties1)
+```
+
+Once we get to know about the data, we explore it more. To begin with, we look at the similarities between visitors and the items they look at. We will use 'similarity' function for that (under 'recommenderlab' package). The similarity function will accept input value as: realRatingMatrix. Relevant code is as follows:
+```{r}
+library(recommenderlab)
+
+events_matrix<- as(events, "matrix")
+class(events_matrix)
+events_rating_matrix<- as(events, "realRatingMatrix")
+class(events_rating_matrix)
+```
+
+###5.	Defining training and test sets
+
+We divide the given data set into training and test sets as follows:
+```{r}
+library(recommenderlab)
+library(dplyr)
+
+set.seed(101) # Set Seed so that same sample can be reproduced in future also
+# Now Selecting 75% of data as sample from total 'n' rows of the data  
+sample <- sample.int(n = nrow(events_rating_matrix), size = floor(.75*nrow(events_rating_matrix)), replace = F)
+train_data <- events_rating_matrix[sample, ]
+test_data  <- events_rating_matrix[-sample, ]
+
+```
+
+###6.	Building the recommendation model and applying on training data set
+
+The different kinds of recommender models that can be used are as follows:
+```{r}
+recommender_models <- recommenderRegistry$get_entries(dataType =
+"realRatingMatrix")
+names(recommender_models)
+```
+Out of these, UBCF will be used since it solely serves our purpose.
+
+Method used is UBCF: User based collaborative filtering. This is the best option to be used for the given data set since we need to study the user activities and then predict their future activities based on previous ones.
+The data types of the data frames are beig changed into matrix as that is what is accepted by the Recommender and other functions. ALso, because of such a large data set, storing data as a matrix or rating matrix will be efficient for the memory usage.
+```{r}
+library(reshape2)
+library(arules)
+rec_model <- Recommender(data = train_data, method = "UBCF",  param=list(normalize = "Z-score",method="Cosine",n=5))
+
+predict_item <- function(visitorid) 
+{
+  
+  visitor_items <- events$itemid
+  visitor_items <- as(visitor_items, "matrix")
+  visitor_items_matrix   <- as(visitor_items, "binaryRatingMatrix")
+  
+  # perform the prediction
+  recommend <- predict(rec_model, visitor_items_matrix,n=3)
+  
+  return(as(recommend,"list"))
+}
+```
+
+
+###7. Drawing useful insights from the data
+
+From the given data, we can draw some actionable insights that can be very helpful for the organization. Here, the original data has not been modified but new data frames are created that are actually subsets of the original data.
+```{r}
+#subset of data
+date_only <- events["timestamp"]
+event_only <- events["event"]
+events_visitorid <- events["visitorid"]
+new_events2 <- events[100:200,c("visitorid","event")]
+
+new_events <- events[1:100,c("visitorid","itemid")]
+new_events_matrix <- as(new_events, "matrix")
+new_events_rating <- as(new_events, "realRatingMatrix")
+slotNames(new_events_rating)  #has a data slot
+class(new_events_rating@data)
+dim(new_events_rating@data)
+```
+
+###Finding occurrence of various items will help the organization/ vendor to know the demand of various items:
+```{r}
+item_occurrence <- as.vector(new_events_rating@data)
+unique(item_occurrence)
+sum(item_occurrence)
+occurrence_table <- table(item_occurrence)
+occurrence_table
+
+
+occurrence <- table(new_events$itemid)
+
+occurrence_not1 <- occurrence[occurrence!=1]
+```
+
+###Exploring which item has been viewed the most- showing the popularity of the items. So special discounts on such selected items will bring in lot of visitors:
+```{r}
+unique(new_events2$event)
+
+Mode <- function(event) 
+{
+  event_u <- unique(new_events$event)
+  event_u[which.max(tabulate(match(event, event_u)))]
+}
+
+sk <- apply(new_events2, 1, function(event) sum(event == Mode(event)))
+```
+
+
+###Finding the number of activities and the ranking of their occurences:
+```{r}
+
+table(event_only)
+
+hist(table(event_only), col= "red", main = "Histogram of Events")
+
+
+```
+
+###Finding the visitor with the maximum and minimum activity is pretty informative to the organization. This way the organization can give special offers to the visitors with less activity and rewards to visitors with most activity: 
+```{r}
+
+max <- max(table(events_visitorid))
+min <- min(table(events_visitorid))
+barplot(table(events_visitorid), col = "wheat", main = "Occurences of various visitor IDs")
+
+```
+
+###Exploring date/time can give us information about what time are the visitors most or least active.
+```{r}
+val <- date_only$timestamp
+date_modified <- as.Date(as.POSIXct(val, origin="1970-01-01"))
+date_original <- date_only$timestamp
+
+date_df <- data.frame(date_original, date_modified)
+
+tail(names(sort(table(date_df$date_original))), 5)
+```
+These are the original Unix timestamps that have the highest frequency in the given data.
+
+```{r}
+
+date_occurences<-table(unlist(date_only$timestamp))
+
+date_occurences<-table(unlist(date_df$date_modified))
+max(date_occurences)
+
+tail(names(sort(table(date_df$date_modified))), 5)
+```
+So the maximum times a date occured is 110. This is a decent number given the number of customer records. 
+
+###Analysing visitor activity
+```{r}
+tail(names(sort(table(events$visitorid))), 5)
+```
+These are the top 5 most active visitors.
+
+
+```{r}
+visitor_occurences<-table(unlist(events$visitorid))
+#boxplot(visitor_occurences, col = "blue")
+
+hist(events$itemid, col = "blue")
+rug(events$itemid)
+
+max(visitor_occurences)
+min(visitor_occurences)
+
+```
+So the maximum number of times a visitor performed an activity is 7757 and the minimum is 1.
+
+
